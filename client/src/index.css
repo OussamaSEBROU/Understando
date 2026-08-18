@@ -1,0 +1,117 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@font-face {
+  font-family: "Montserrat Arabic";
+  src: url("https://cdn.jsdelivr.net/gh/typeagm/Montserrat-Arabic@master/fonts/WEB/Montserrat-Arabic-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat Arabic";
+  src: url("https://cdn.jsdelivr.net/gh/typeagm/Montserrat-Arabic@master/fonts/WEB/Montserrat-Arabic-Medium.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat Arabic";
+  src: url("https://cdn.jsdelivr.net/gh/typeagm/Montserrat-Arabic@master/fonts/WEB/Montserrat-Arabic-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat Arabic";
+  src: url("https://cdn.jsdelivr.net/gh/typeagm/Montserrat-Arabic@master/fonts/WEB/Montserrat-Arabic-Bold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat Arabic";
+  src: url("https://cdn.jsdelivr.net/gh/typeagm/Montserrat-Arabic@master/fonts/WEB/Montserrat-Arabic-ExtraBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat Arabic";
+  src: url("https://cdn.jsdelivr.net/gh/typeagm/Montserrat-Arabic@master/fonts/WEB/Montserrat-Arabic-Black.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: 0rem;
+  --radius-md: 0rem;
+  --radius-lg: 0rem;
+  --radius-xl: 0rem;
+  --font-display: "Montserrat", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root,
+.dark {
+  --radius: 0rem;
+  --background: oklch(0.1 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.1 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.1 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.62 0.23 27);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.2 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.2 0 0);
+  --muted-foreground: oklch(0.7 0 0);
+  --accent: oklch(0.2 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.62 0.23 27);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.985 0 0 / 28%);
+  --input: oklch(0.985 0 0 / 28%);
+  --ring: oklch(0.62 0.23 27);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { background: #000; }
+  body { @apply bg-background text-foreground; font-family: "Montserrat", sans-serif; }
+  html[data-interface-language="ar"] body,
+  [dir="rtl"] { font-family: "Montserrat Arabic", "Montserrat", sans-serif; }
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]), [type="button"]:not(:disabled), [type="submit"]:not(:disabled), a[href], select:not(:disabled) { @apply cursor-pointer; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status-pulse { animation: status-pulse 1.5s ease-in-out infinite; }
+  @keyframes status-pulse { 50% { opacity: 0.45; } }
+}

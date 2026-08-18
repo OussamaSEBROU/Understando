@@ -1,0 +1,24 @@
+services:
+  - type: web
+    runtime: node
+    name: understand-api
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+
+  - type: web
+    runtime: static
+    name: understand-web
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:client
+    staticPublishPath: dist/public
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
