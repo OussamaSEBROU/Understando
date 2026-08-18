@@ -4,8 +4,6 @@
 
 | الخدمة | الاسم | هل هو سر؟ | مثال للقيمة |
 |---|---|---:|---|
-| API الخاصة | `GEMINI_API_KEY` | نعم | يوضع من لوحة مزود الترجمة فقط |
-| API الخاصة | `CORS_ORIGIN` | لا | `https://understand-web.onrender.com` |
-| الواجهة الثابتة | `VITE_API_BASE_URL` | لا | `https://understand-api.onrender.com` |
+| خدمة `understand` الموحدة | `GEMINI_API_KEY` | نعم | يوضع من لوحة مزود الترجمة فقط |
 
-> لا يمكن اعتبار متغير `VITE_` سراً: Vite يضم قيمته في ملفات JavaScript التي تصل إلى المتصفح. لهذا لا يُسمح إلا بعنوان API في `VITE_API_BASE_URL`.
+> لا يمكن اعتبار متغير `VITE_` سراً: Vite يضم قيمته في ملفات JavaScript التي تصل إلى المتصفح. لا حاجة إلى أي متغير `VITE_` في نمط خدمة Render الموحدة.
