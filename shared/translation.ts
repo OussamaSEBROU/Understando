@@ -21,6 +21,19 @@ export type SubtitleCue = {
   translated: string;
 };
 
+/** The fixed unit used by the progressive, free-tier translation pipeline. */
+export const PROGRESSIVE_SEGMENT_SECONDS = 30;
+
+export type TranslationSegment = {
+  videoId: string;
+  targetLanguage: TargetLanguageCode;
+  targetLanguageLabel: string;
+  startSec: number;
+  endSec: number;
+  cues: SubtitleCue[];
+  cached: boolean;
+};
+
 export const targetLanguageByCode = (code: TargetLanguageCode) => {
   const language = TRANSLATION_LANGUAGES.find(item => item.code === code);
   if (!language) {
