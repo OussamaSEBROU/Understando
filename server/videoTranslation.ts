@@ -1,7 +1,9 @@
 import {
+  PROGRESSIVE_SEGMENT_SECONDS,
   TRANSLATION_LANGUAGES,
   type SubtitleCue,
   type TargetLanguageCode,
+  type TranslationSegment,
   targetLanguageByCode,
 } from "../shared/translation";
 import { FreeQuotaGovernor } from "./quotaGovernor";
@@ -10,7 +12,7 @@ type SourceCue = Omit<SubtitleCue, "translated">;
 
 type CacheValue = {
   expiresAt: number;
-  result: TranslationResult;
+  result: TranslationSegment;
 };
 
 type InteractionResponse = {
@@ -22,13 +24,7 @@ type InteractionResponse = {
   };
 };
 
-export type TranslationResult = {
-  videoId: string;
-  targetLanguage: TargetLanguageCode;
-  targetLanguageLabel: string;
-  cues: SubtitleCue[];
-  cached: boolean;
-};
+export type TranslationResult = TranslationSegment;
 
 export class VideoTranslationError extends Error {
   constructor(message: string) {
@@ -38,7 +34,9 @@ export class VideoTranslationError extends Error {
 }
 
 const translationCache = new Map<string, CacheValue>();
-const inFlightTranslations = new Map<string, Promise<TranslationResult>>();
+const inFlightTranslations = new Map<string, Promise<TranslationSegment>>();
+const countedVideoTokens = new Map<string, { expiresAt: number; tokens: number }>();
+const inFlightTokenCounts = new Map<string, Promise<number>>();
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_CUES_PER_BLOCK = 34;
 const MAX_BLOCK_CHARS = 7_000;
@@ -66,6 +64,18 @@ const videoQuotaGovernor = new FreeQuotaGovernor({
 const MAX_VIDEO_INPUT_TOKENS = positiveInteger("FREE_VIDEO_MAX_INPUT_TOKENS", 100_000);
 const MAX_VIDEO_OUTPUT_TOKENS = positiveInteger("FREE_VIDEO_MAX_OUTPUT_TOKENS", 6_144);
 const FALLBACK_VIDEO_RESERVATION_TOKENS = positiveInteger("FREE_VIDEO_FALLBACK_TOKENS", 60_000);
+
+export const normalizeSegmentBounds = (startSec: number, endSec: number) => {
+  const start = Math.max(0, Math.floor(startSec));
+  const end = Math.ceil(endSec);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new VideoTranslationError("The requested subtitle segment has invalid timing.");
+  }
+  if (end - start > PROGRESSIVE_SEGMENT_SECONDS) {
+    throw new VideoTranslationError("Subtitle segments may not exceed 30 seconds on the free path.");
+  }
+  return { startSec: start, endSec: end };
+};
 
 export const extractYoutubeVideoId = (value: string): string => {
   const candidate = value.trim();
@@ -232,14 +242,25 @@ const videoTranslationSchema = {
   additionalProperties: false,
 } as const;
 
-const directVideoPrompt = (language: ReturnType<typeof targetLanguageByCode>) =>
+const formatPromptTime = (seconds: number) => {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+};
+
+const directVideoPrompt = (
+  language: ReturnType<typeof targetLanguageByCode>,
+  startSec: number,
+  endSec: number
+) =>
   [
     "Create timed, subtitle-quality translations for this public video.",
     `Target language: ${language.label}.`,
+    `Translate only the timeline window from ${formatPromptTime(startSec)} to ${formatPromptTime(endSec)} (inclusive of speech that begins inside this window).`,
     "Return only the translated spoken content as caption cues in the required JSON schema.",
     "Translate idiomatically from the complete audio-visual context. Preserve names, pronunciations, technical terms, and established spellings when appropriate.",
     "Never summarize, explain, comment, invent content, or add a transcript separate from the translated captions.",
-    "Use integer startMs and endMs values in milliseconds from the video timeline. Keep each cue concise, naturally readable, and aligned to the spoken phrase. Do not emit cues for silence.",
+    "Use integer startMs and endMs values in milliseconds from the original full-video timeline, never from a relative segment clock. Do not return cues outside the requested window. Keep each cue concise, naturally readable, and aligned to the spoken phrase. Return an empty cues array if the window is silent.",
   ].join("\n");
 
 const modelName = () => process.env.VIDEO_TRANSLATION_MODEL?.trim() || DEFAULT_MODEL;
@@ -277,7 +298,10 @@ const countVideoInputTokens = async (apiKey: string, videoUrl: string, prompt: s
   }
 };
 
-export const parseDirectVideoCues = (raw: string): SubtitleCue[] => {
+export const parseDirectVideoCues = (
+  raw: string,
+  segment?: { startMs: number; endMs: number }
+): SubtitleCue[] => {
   const parsed = extractJson(raw);
   if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as { cues?: unknown }).cues)) {
     throw new VideoTranslationError("The video translation response did not include timed captions.");
@@ -312,11 +336,24 @@ export const parseDirectVideoCues = (raw: string): SubtitleCue[] => {
       : [];
   });
 
-  if (cues.length === 0) {
+  const inSegment = segment
+    ? cues
+        .filter(cue => cue.endMs > segment.startMs && cue.startMs < segment.endMs)
+        .map(cue => ({
+          ...cue,
+          startMs: Math.max(segment.startMs, cue.startMs),
+          endMs: Math.min(segment.endMs, cue.endMs),
+        }))
+        .filter(cue => cue.endMs > cue.startMs)
+    : cues;
+
+  if (inSegment.length === 0 && !segment) {
     throw new VideoTranslationError("The video did not produce usable timed translations.");
   }
 
-  return cues.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs).map((cue, id) => ({ ...cue, id }));
+  return inSegment
+    .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
+    .map((cue, id) => ({ ...cue, id }));
 };
 
 const providerError = (status: number) => {
@@ -335,7 +372,8 @@ const providerError = (status: number) => {
 const requestDirectVideoTranslation = async (
   apiKey: string,
   videoUrl: string,
-  prompt: string
+  prompt: string,
+  segment: { startSec: number; endSec: number }
 ): Promise<SubtitleCue[]> => {
   const response = await fetch(INTERACTIONS_URL, {
     method: "POST",
@@ -368,19 +406,49 @@ const requestDirectVideoTranslation = async (
   if (!output) {
     throw new VideoTranslationError("The video translation service returned no timed captions.");
   }
-  return parseDirectVideoCues(output);
+  return parseDirectVideoCues(output, {
+    startMs: segment.startSec * 1_000,
+    endMs: segment.endSec * 1_000,
+  });
 };
 
-export const translateVideo = async ({
+const getReservedVideoInputTokens = async (apiKey: string, videoUrl: string, videoId: string, prompt: string) => {
+  const cached = countedVideoTokens.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) return cached.tokens;
+
+  const existing = inFlightTokenCounts.get(videoId);
+  if (existing) return existing;
+
+  const request = (async () => {
+    const counted = await countVideoInputTokens(apiKey, videoUrl, prompt);
+    const tokens = counted ?? FALLBACK_VIDEO_RESERVATION_TOKENS;
+    countedVideoTokens.set(videoId, { expiresAt: Date.now() + CACHE_TTL_MS, tokens });
+    return tokens;
+  })();
+
+  inFlightTokenCounts.set(videoId, request);
+  try {
+    return await request;
+  } finally {
+    inFlightTokenCounts.delete(videoId);
+  }
+};
+
+export const translateVideoSegment = async ({
   youtubeUrl,
   targetLanguage,
+  startSec,
+  endSec,
 }: {
   youtubeUrl: string;
   targetLanguage: TargetLanguageCode;
-}): Promise<TranslationResult> => {
+  startSec: number;
+  endSec: number;
+}): Promise<TranslationSegment> => {
   const videoId = extractYoutubeVideoId(youtubeUrl);
   const language = targetLanguageByCode(targetLanguage);
-  const cacheKey = `${videoId}:${targetLanguage}`;
+  const segment = normalizeSegmentBounds(startSec, endSec);
+  const cacheKey = `${videoId}:${targetLanguage}:${segment.startSec}:${segment.endSec}`;
   const cached = translationCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return { ...cached.result, cached: true };
@@ -396,9 +464,8 @@ export const translateVideo = async ({
     }
 
     const videoUrl = canonicalYoutubeUrl(videoId);
-    const prompt = directVideoPrompt(language);
-    const countedInputTokens = await countVideoInputTokens(apiKey, videoUrl, prompt);
-    const inputTokens = countedInputTokens ?? FALLBACK_VIDEO_RESERVATION_TOKENS;
+    const prompt = directVideoPrompt(language, segment.startSec, segment.endSec);
+    const inputTokens = await getReservedVideoInputTokens(apiKey, videoUrl, videoId, prompt);
 
     if (inputTokens > MAX_VIDEO_INPUT_TOKENS) {
       throw new VideoTranslationError("This video is longer than the current free processing limit. Try a shorter public video or raise the server limit only if your free quota allows it.");
@@ -406,12 +473,14 @@ export const translateVideo = async ({
 
     // Reserve input plus the maximum structured subtitle output before the call.
     await videoQuotaGovernor.reserve(inputTokens + MAX_VIDEO_OUTPUT_TOKENS);
-    const cues = await requestDirectVideoTranslation(apiKey, videoUrl, prompt);
+    const cues = await requestDirectVideoTranslation(apiKey, videoUrl, prompt, segment);
 
-    const result: TranslationResult = {
+    const result: TranslationSegment = {
       videoId,
       targetLanguage,
       targetLanguageLabel: language.label,
+      startSec: segment.startSec,
+      endSec: segment.endSec,
       cues,
       cached: false,
     };
@@ -426,5 +495,20 @@ export const translateVideo = async ({
     inFlightTranslations.delete(cacheKey);
   }
 };
+
+/** Kept for backward-compatible clients; it now returns the priority opening segment. */
+export const translateVideo = async ({
+  youtubeUrl,
+  targetLanguage,
+}: {
+  youtubeUrl: string;
+  targetLanguage: TargetLanguageCode;
+}): Promise<TranslationResult> =>
+  translateVideoSegment({
+    youtubeUrl,
+    targetLanguage,
+    startSec: 0,
+    endSec: PROGRESSIVE_SEGMENT_SECONDS,
+  });
 
 export const supportedTargetLanguageCodes = TRANSLATION_LANGUAGES.map(item => item.code);
