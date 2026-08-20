@@ -1,7 +1,18 @@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useVideoSync } from "@/hooks/useVideoSync";
-import { getSeekTarget } from "@/lib/playerControls";
+import { getDoubleTapSeekOffset, getSeekTarget } from "@/lib/playerControls";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { SubtitleCue } from "../../../shared/translation";
+import { Focus, Maximize2, Minimize2, Settings2, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 type PlayerInstance = {
@@ -59,23 +70,29 @@ type YouTubeStageProps = {
   videoId: string | null;
   cues: SubtitleCue[];
   subtitleDirection: "rtl" | "ltr";
+  isFocusMode: boolean;
+  onToggleFocusMode: () => void;
 };
 
-type SubtitleSize = "small" | "medium" | "large";
+type SubtitleSize = "tiny" | "small" | "medium" | "large";
 
 const subtitleSizeClasses: Record<SubtitleSize, string> = {
+  tiny: "text-xs sm:text-sm md:text-base",
   small: "text-sm sm:text-base md:text-lg",
   medium: "text-base sm:text-lg md:text-xl",
   large: "text-lg sm:text-xl md:text-2xl",
 };
 
-export function YouTubeStage({ videoId, cues, subtitleDirection }: YouTubeStageProps) {
+export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, onToggleFocusMode }: YouTubeStageProps) {
   const { t } = useLanguage();
+  const stageRef = useRef<HTMLElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<PlayerInstance | null>(null);
+  const lastTouchRef = useRef<{ side: "back" | "forward"; timestamp: number } | null>(null);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [subtitleSize, setSubtitleSize] = useState<SubtitleSize>("medium");
+  const [isStageFullscreen, setIsStageFullscreen] = useState(false);
   const activeCue = useVideoSync(playerRef, cues);
 
   const seekBy = (offsetSeconds: number) => {
@@ -83,6 +100,31 @@ export function YouTubeStage({ videoId, cues, subtitleDirection }: YouTubeStageP
     if (!player) return;
     player.seekTo(getSeekTarget(player.getCurrentTime(), player.getDuration(), offsetSeconds), true);
   };
+
+  const handleSeekZoneTap = (side: "back" | "forward") => {
+    const now = Date.now();
+    const lastTap = lastTouchRef.current;
+    if (lastTap?.side === side && now - lastTap.timestamp < 320) {
+      seekBy(getDoubleTapSeekOffset(side));
+      lastTouchRef.current = null;
+      return;
+    }
+    lastTouchRef.current = { side, timestamp: now };
+  };
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement === stageRef.current) {
+      await document.exitFullscreen();
+      return;
+    }
+    await stageRef.current?.requestFullscreen();
+  };
+
+  useEffect(() => {
+    const syncFullscreenState = () => setIsStageFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
 
   useEffect(() => {
     if (!videoId || !mountRef.current) return;
@@ -104,6 +146,7 @@ export function YouTubeStage({ videoId, cues, subtitleDirection }: YouTubeStageP
             playsinline: 1,
             enablejsapi: 1,
             cc_load_policy: 0,
+            fs: 0,
             origin: window.location.origin,
           },
           events: {
@@ -127,7 +170,7 @@ export function YouTubeStage({ videoId, cues, subtitleDirection }: YouTubeStageP
   }, [t.playerLoadError, videoId]);
 
   return (
-    <section className="relative aspect-video w-full overflow-hidden border border-white/30 bg-black" aria-label={t.playerLabel} aria-busy={videoId ? !isPlayerReady : undefined}>
+    <section ref={stageRef} className="youtube-stage surface-shine relative aspect-video w-full overflow-hidden border border-white/30 bg-black touch-manipulation" aria-label={t.playerLabel} aria-busy={videoId ? !isPlayerReady : undefined}>
       {videoId ? (
         <div ref={mountRef} className="h-full w-full [&_iframe]:h-full [&_iframe]:w-full" />
       ) : (
@@ -153,40 +196,59 @@ export function YouTubeStage({ videoId, cues, subtitleDirection }: YouTubeStageP
         </div>
       )}
       {videoId && isPlayerReady && (
-        <div className="absolute end-3 top-3 z-20 flex items-center gap-1 border border-white/30 bg-black/65 p-1.5 text-white backdrop-blur-sm" role="group" aria-label={t.subtitleControls}>
-          <div className="flex items-center gap-1" dir="ltr">
-            <button type="button" className="min-w-9 border border-white/25 px-1.5 py-1 font-mono text-xs font-bold transition-colors hover:bg-white hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500" onClick={() => seekBy(-10)} aria-label={t.seekBack} title={t.seekBack}>
-              −10
-            </button>
-            <button type="button" className="min-w-9 border border-white/25 px-1.5 py-1 font-mono text-xs font-bold transition-colors hover:bg-white hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500" onClick={() => seekBy(10)} aria-label={t.seekForward} title={t.seekForward}>
-              +10
-            </button>
+        <>
+          <div className="absolute end-3 top-3 z-30">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className="flex size-11 items-center justify-center border border-white/30 bg-black/65 text-white backdrop-blur-sm transition-colors hover:border-red-500 hover:text-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 sm:size-10" aria-label={t.subtitleSettings} title={t.subtitleSettings}>
+                  <Settings2 className="size-4" aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 border-white/30 bg-black/95 p-1.5 text-white backdrop-blur-xl">
+                <div dir={subtitleDirection}>
+                <DropdownMenuLabel className="px-2 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-white/50">{t.subtitleControls}</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => seekBy(-10)} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
+                  <Undo2 className="size-4" /> {t.seekBack}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => seekBy(10)} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
+                  <span className="flex size-4 items-center justify-center text-xs font-black">+10</span> {t.seekForward}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-white/20" />
+                <DropdownMenuLabel className="px-2 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-white/50">{t.subtitleSizeLabel}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={subtitleSize} onValueChange={value => setSubtitleSize(value as SubtitleSize)}>
+                  {([
+                    ["tiny", t.subtitleSizeTiny],
+                    ["small", t.subtitleSizeSmall],
+                    ["medium", t.subtitleSizeMedium],
+                    ["large", t.subtitleSizeLarge],
+                  ] as const).map(([size, label]) => (
+                    <DropdownMenuRadioItem key={size} value={size} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
+                      {label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator className="bg-white/20" />
+                <DropdownMenuItem onSelect={() => void toggleFullscreen()} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
+                  <Maximize2 className="size-4" /> {t.fullscreen}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={onToggleFocusMode} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
+                  <Focus className="size-4" /> {isFocusMode ? t.exitFocusMode : t.focusMode}
+                </DropdownMenuItem>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <span className="h-5 w-px bg-white/25" aria-hidden="true" />
-          <div className="flex items-center gap-1">
-            <span className="sr-only">{t.subtitleSizeLabel}</span>
-            {([
-              ["small", t.subtitleSizeSmall],
-              ["medium", t.subtitleSizeMedium],
-              ["large", t.subtitleSizeLarge],
-            ] as const).map(([size, label]) => (
-              <button
-                key={size}
-                type="button"
-                className={`min-w-7 border px-1.5 py-1 font-bold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 ${subtitleSize === size ? "border-red-500 bg-red-600 text-white" : "border-white/25 text-white hover:bg-white hover:text-black"}`}
-                onClick={() => setSubtitleSize(size)}
-                aria-pressed={subtitleSize === size}
-                aria-label={`${t.subtitleSizeLabel}: ${label}`}
-                title={`${t.subtitleSizeLabel}: ${label}`}
-              >
-                A
-              </button>
-            ))}
-          </div>
-        </div>
+          <button type="button" className="absolute inset-y-0 start-0 z-20 w-[27%] cursor-default bg-transparent" aria-label={t.seekBack} onPointerUp={event => { if (event.pointerType === "touch") handleSeekZoneTap("back"); }} onDoubleClick={() => seekBy(getDoubleTapSeekOffset("back"))} />
+          <button type="button" className="absolute inset-y-0 end-0 z-20 w-[27%] cursor-default bg-transparent" aria-label={t.seekForward} onPointerUp={event => { if (event.pointerType === "touch") handleSeekZoneTap("forward"); }} onDoubleClick={() => seekBy(getDoubleTapSeekOffset("forward"))} />
+        </>
+      )}
+      {isStageFullscreen && (
+        <button type="button" className="absolute end-3 top-3 z-40 flex size-11 items-center justify-center border border-white/30 bg-black/70 text-white backdrop-blur-sm hover:border-red-500 sm:end-4 sm:top-4 sm:size-10" onClick={() => void toggleFullscreen()} aria-label={t.exitFullscreen} title={t.exitFullscreen}>
+          <Minimize2 className="size-4" aria-hidden="true" />
+        </button>
       )}
       {activeCue?.translated && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-[11%] z-10 px-5 text-center sm:px-14" dir={subtitleDirection}>
+        <div className="subtitle-layer pointer-events-none absolute inset-x-0 bottom-[13%] z-25 px-3 text-center sm:bottom-[11%] sm:px-14" dir={subtitleDirection}>
           <p className={`inline bg-black/30 px-2.5 py-1.5 font-bold leading-snug tracking-normal text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.95)] backdrop-blur-[1px] ${subtitleSizeClasses[subtitleSize]}`}>
             {activeCue.translated}
           </p>
