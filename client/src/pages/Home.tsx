@@ -1,10 +1,16 @@
 import { YouTubeStage } from "@/components/YouTubeStage";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { mergeProgressiveCues } from "@/lib/progressiveCues";
 import { getYouTubeVideoId } from "@/lib/youtubeUrl";
 import { trpc } from "@/lib/trpc";
-import { TRANSLATION_LANGUAGES, type SubtitleCue, type TargetLanguageCode } from "../../../shared/translation";
+import {
+  PROGRESSIVE_SEGMENT_SECONDS,
+  TRANSLATION_LANGUAGES,
+  type SubtitleCue,
+  type TargetLanguageCode,
+} from "../../../shared/translation";
 import { ArrowRight, Languages, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function Home() {
   const { direction, interfaceLanguage, t, toggleLanguage } = useLanguage();
@@ -13,18 +19,23 @@ export default function Home() {
   const [videoId, setVideoId] = useState<string | null>(null);
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [isFocusMode, setIsFocusMode] = useState(false);
-  const translation = trpc.video.translate.useMutation({
-    onSuccess: result => {
-      setVideoId(result.videoId);
-      setCues(result.cues);
-    },
-  });
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [nextSegmentStart, setNextSegmentStart] = useState<number | null>(null);
+  const [activeTranslation, setActiveTranslation] = useState<{
+    requestId: number;
+    youtubeUrl: string;
+    targetLanguage: TargetLanguageCode;
+  } | null>(null);
+  const requestIdRef = useRef(0);
+  const openingSegment = trpc.video.translateSegment.useMutation();
+  const backgroundSegment = trpc.video.translateSegment.useMutation();
 
   const selectedLanguage = TRANSLATION_LANGUAGES.find(item => item.code === language) ?? TRANSLATION_LANGUAGES[0];
-  const rawError = translation.error?.message.toLowerCase() ?? "";
-  const friendlyError = !translation.error
+  const latestError = openingSegment.error ?? backgroundSegment.error;
+  const rawError = latestError?.message.toLowerCase() ?? "";
+  const friendlyError = !latestError
     ? null
-    : translation.error.data?.code === "TOO_MANY_REQUESTS"
+    : latestError.data?.code === "TOO_MANY_REQUESTS"
       ? rawError.includes("today") || rawError.includes("budget")
         ? t.dailyCapacity
         : t.queueBusy
@@ -36,10 +47,75 @@ export default function Home() {
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const validVideoId = getYouTubeVideoId(url);
+    if (!validVideoId) {
+      setVideoId(null);
+      return;
+    }
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setCues([]);
-    setVideoId(getYouTubeVideoId(url));
-    translation.mutate({ youtubeUrl: url, targetLanguage: language });
+    setVideoId(null);
+    setVideoDuration(null);
+    setNextSegmentStart(null);
+    setActiveTranslation({ requestId, youtubeUrl: url, targetLanguage: language });
+    openingSegment.reset();
+    backgroundSegment.reset();
+    openingSegment.mutate(
+      {
+        youtubeUrl: url,
+        targetLanguage: language,
+        startSec: 0,
+        endSec: PROGRESSIVE_SEGMENT_SECONDS,
+      },
+      {
+        onSuccess: result => {
+          if (requestIdRef.current !== requestId) return;
+          setVideoId(result.videoId);
+          setCues(result.cues);
+          setNextSegmentStart(result.endSec);
+        },
+      }
+    );
   };
+
+  useEffect(() => {
+    if (!activeTranslation || nextSegmentStart === null || backgroundSegment.isPending) return;
+
+    const durationCeiling = videoDuration && videoDuration > 0 ? Math.ceil(videoDuration) : null;
+    if (durationCeiling !== null && nextSegmentStart >= durationCeiling) {
+      setNextSegmentStart(null);
+      return;
+    }
+
+    const endSec = durationCeiling === null
+      ? nextSegmentStart + PROGRESSIVE_SEGMENT_SECONDS
+      : Math.min(nextSegmentStart + PROGRESSIVE_SEGMENT_SECONDS, durationCeiling);
+    const requestId = activeTranslation.requestId;
+
+    backgroundSegment.mutate(
+      {
+        youtubeUrl: activeTranslation.youtubeUrl,
+        targetLanguage: activeTranslation.targetLanguage,
+        startSec: nextSegmentStart,
+        endSec,
+      },
+      {
+        onSuccess: result => {
+          if (requestIdRef.current !== requestId) return;
+          setCues(previous => mergeProgressiveCues(previous, result.cues));
+          setNextSegmentStart(result.endSec);
+        },
+        onError: () => {
+          if (requestIdRef.current === requestId) setNextSegmentStart(null);
+        },
+      }
+    );
+  }, [activeTranslation, backgroundSegment, nextSegmentStart, videoDuration]);
+
+  const isPreparing = openingSegment.isPending || backgroundSegment.isPending;
+  const isPreparingNext = videoId !== null && (backgroundSegment.isPending || nextSegmentStart !== null);
 
   return (
     <div className="app-shell min-h-screen w-full max-w-full overflow-x-clip bg-black text-white selection:bg-red-600 selection:text-white">
@@ -72,12 +148,13 @@ export default function Home() {
               <select id="target-language" value={language} onChange={event => setLanguage(event.target.value as TargetLanguageCode)} className="h-14 border border-white/35 bg-black px-4 text-base font-bold text-white outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 sm:h-13 sm:px-3 sm:text-sm">
                 {TRANSLATION_LANGUAGES.map(item => <option key={item.code} value={item.code} className="bg-black text-white">{item.label}</option>)}
               </select>
-              <button type="submit" disabled={translation.isPending || !url.trim()} className="surface-shine flex h-14 items-center justify-center gap-2 bg-red-600 px-5 text-sm font-black uppercase tracking-[0.14em] text-white transition-transform duration-150 ease-out hover:bg-red-500 active:scale-[0.97] disabled:cursor-not-allowed disabled:bg-white/15 sm:h-13 sm:text-xs sm:tracking-[0.18em]">
-                {translation.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <ArrowRight className="size-4" aria-hidden="true" />}
-                {translation.isPending ? t.prepare : t.translate}
+              <button type="submit" disabled={isPreparing || !url.trim()} className="surface-shine flex h-14 items-center justify-center gap-2 bg-red-600 px-5 text-sm font-black uppercase tracking-[0.14em] text-white transition-transform duration-150 ease-out hover:bg-red-500 active:scale-[0.97] disabled:cursor-not-allowed disabled:bg-white/15 sm:h-13 sm:text-xs sm:tracking-[0.18em]">
+                {isPreparing ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <ArrowRight className="size-4" aria-hidden="true" />}
+                {isPreparing ? t.prepare : t.translate}
               </button>
             </form>
-            {translation.isPending && <p role="status" className="mt-3 text-xs font-semibold text-white/65">{t.queueProgress}</p>}
+            {openingSegment.isPending && <p role="status" className="mt-3 text-xs font-semibold text-white/65">{t.preparingOpeningSegment}</p>}
+            {videoId && isPreparingNext && <p role="status" className="mt-3 text-xs font-semibold text-white/65">{t.preparingNextSegment}</p>}
             {friendlyError && <p role="alert" className="mt-3 border-s-2 border-red-600 ps-3 text-sm font-medium text-red-300">{friendlyError}</p>}
           </section>
 
@@ -86,7 +163,15 @@ export default function Home() {
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-red-500">02 / {t.synchronizedPlayer}</p>
               {cues.length > 0 && <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">{cues.length} {t.timedCaptions}</p>}
             </div>
-            <YouTubeStage videoId={videoId} cues={cues} subtitleDirection={selectedLanguage.dir} isFocusMode={isFocusMode} onToggleFocusMode={() => setIsFocusMode(value => !value)} />
+            <YouTubeStage
+              videoId={videoId}
+              cues={cues}
+              subtitleDirection={selectedLanguage.dir}
+              isFocusMode={isFocusMode}
+              isPreparingNext={isPreparingNext}
+              onDurationChange={setVideoDuration}
+              onToggleFocusMode={() => setIsFocusMode(value => !value)}
+            />
           </section>
         </div>
       </main>
