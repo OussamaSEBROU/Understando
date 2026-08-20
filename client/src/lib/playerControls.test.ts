@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDoubleTapSeekOffset, getSeekTarget } from "./playerControls";
+import { clampPlaybackTime, getDoubleTapSeekOffset, getSeekTarget } from "./playerControls";
 
 describe("getSeekTarget", () => {
   it("moves the official player time by the requested offset", () => {
@@ -17,5 +17,13 @@ describe("getDoubleTapSeekOffset", () => {
   it("maps the left and right gesture zones to ten-second seeks", () => {
     expect(getDoubleTapSeekOffset("back")).toBe(-10);
     expect(getDoubleTapSeekOffset("forward")).toBe(10);
+  });
+});
+
+describe("clampPlaybackTime", () => {
+  it("keeps a direct timeline target inside the playable range", () => {
+    expect(clampPlaybackTime(-2, 100)).toBe(0);
+    expect(clampPlaybackTime(44.5, 100)).toBe(44.5);
+    expect(clampPlaybackTime(120, 100)).toBe(100);
   });
 });
