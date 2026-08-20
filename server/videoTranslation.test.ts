@@ -4,6 +4,8 @@ import {
   chunkCues,
   extractYoutubeVideoId,
   llmContentToText,
+  normalizeSegmentBounds,
+  parseDirectVideoCues,
   parseTranslatedBlock,
   sourceCueFromTranscript,
 } from "./videoTranslation";
@@ -72,6 +74,42 @@ describe("video translation contracts", () => {
     expect(chunkCues(cues)).toHaveLength(2);
     expect(chunkCues(cues)[0]).toHaveLength(34);
   });
+
+  it("normalizes direct-video timed translations into the player cue contract", () => {
+    expect(
+      parseDirectVideoCues(
+        '{"cues":[{"startMs":0,"endMs":950,"text":"مرحبًا"},{"startMs":1000,"endMs":1800,"text":"بكم"}]}'
+      )
+    ).toEqual([
+      { id: 0, startMs: 0, endMs: 950, source: "", translated: "مرحبًا" },
+      { id: 1, startMs: 1000, endMs: 1800, source: "", translated: "بكم" },
+    ]);
+  });
+
+  it("rejects a direct-video response without usable timed translations", () => {
+    expect(() => parseDirectVideoCues('{"cues":[]}')).toThrow("usable timed translations");
+  });
+
+  it("keeps only cues overlapping the requested progressive segment", () => {
+    expect(
+      parseDirectVideoCues(
+        '{"cues":[{"startMs":900,"endMs":1500,"text":"A"},{"startMs":1700,"endMs":2300,"text":"B"}]}',
+        { startMs: 1_000, endMs: 2_000 }
+      )
+    ).toEqual([
+      { id: 0, startMs: 1_000, endMs: 1_500, source: "", translated: "A" },
+      { id: 1, startMs: 1_700, endMs: 2_000, source: "", translated: "B" },
+    ]);
+  });
+
+  it("accepts a silent progressive segment without treating it as a service failure", () => {
+    expect(parseDirectVideoCues('{"cues":[]}', { startMs: 30_000, endMs: 60_000 })).toEqual([]);
+  });
+
+  it("normalizes progressive segments and rejects windows above 30 seconds", () => {
+    expect(normalizeSegmentBounds(30.7, 60)).toEqual({ startSec: 30, endSec: 60 });
+    expect(() => normalizeSegmentBounds(0, 31)).toThrow("may not exceed 30 seconds");
+  });
 });
 
 describe("free quota governor", () => {
@@ -110,5 +148,31 @@ describe("free quota governor", () => {
     const governor = new FreeQuotaGovernor({ rpm: 5, tpm: 1_000, rpd: 1, tpd: 900 });
     await governor.reserve(450);
     await expect(governor.reserve(450)).rejects.toMatchObject({ dimension: "RPD" });
+  });
+
+  it("queues a token-heavy next segment until the minute window is available", async () => {
+    let now = 1;
+    const waits: number[] = [];
+    const governor = new FreeQuotaGovernor(
+      { rpm: 4, tpm: 600, rpd: 4, tpd: 1_500 },
+      () => now,
+      async milliseconds => {
+        waits.push(milliseconds);
+        now += milliseconds;
+      }
+    );
+
+    await governor.reserve(400);
+    await governor.reserve(400);
+
+    expect(waits).toHaveLength(1);
+    expect(waits[0]).toBeGreaterThanOrEqual(60_000);
+    await expect(governor.status()).resolves.toMatchObject({ minuteRequests: 1, minuteTokens: 400 });
+  });
+
+  it("stops additional progressive segments when the daily token budget is exhausted", async () => {
+    const governor = new FreeQuotaGovernor({ rpm: 4, tpm: 1_000, rpd: 4, tpd: 700 });
+    await governor.reserve(400);
+    await expect(governor.reserve(400)).rejects.toMatchObject({ dimension: "TPD" });
   });
 });
