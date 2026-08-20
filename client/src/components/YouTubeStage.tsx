@@ -1,6 +1,6 @@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useVideoSync } from "@/hooks/useVideoSync";
-import { getDoubleTapSeekOffset, getSeekTarget } from "@/lib/playerControls";
+import { clampPlaybackTime, getDoubleTapSeekOffset, getSeekTarget } from "@/lib/playerControls";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,6 +71,8 @@ type YouTubeStageProps = {
   cues: SubtitleCue[];
   subtitleDirection: "rtl" | "ltr";
   isFocusMode: boolean;
+  isPreparingNext: boolean;
+  onDurationChange: (duration: number) => void;
   onToggleFocusMode: () => void;
 };
 
@@ -83,7 +85,7 @@ const subtitleSizeClasses: Record<SubtitleSize, string> = {
   large: "text-lg sm:text-xl md:text-2xl",
 };
 
-export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, onToggleFocusMode }: YouTubeStageProps) {
+export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, isPreparingNext, onDurationChange, onToggleFocusMode }: YouTubeStageProps) {
   const { t } = useLanguage();
   const stageRef = useRef<HTMLElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
@@ -93,12 +95,22 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, on
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [subtitleSize, setSubtitleSize] = useState<SubtitleSize>("medium");
   const [isStageFullscreen, setIsStageFullscreen] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const activeCue = useVideoSync(playerRef, cues);
+
+  const seekTo = (seconds: number) => {
+    const player = playerRef.current;
+    if (!player) return;
+    const target = clampPlaybackTime(seconds, player.getDuration());
+    player.seekTo(target, true);
+    setPlaybackTime(target);
+  };
 
   const seekBy = (offsetSeconds: number) => {
     const player = playerRef.current;
     if (!player) return;
-    player.seekTo(getSeekTarget(player.getCurrentTime(), player.getDuration(), offsetSeconds), true);
+    seekTo(getSeekTarget(player.getCurrentTime(), player.getDuration(), offsetSeconds));
   };
 
   const handleSeekZoneTap = (side: "back" | "forward") => {
@@ -127,11 +139,39 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, on
   }, []);
 
   useEffect(() => {
+    if (!isPlayerReady) return;
+    let frame = 0;
+    let lastRenderedAt = 0;
+    let lastDuration = 0;
+    const syncTimeline = (timestamp: number) => {
+      const player = playerRef.current;
+      if (player && timestamp - lastRenderedAt > 120) {
+        const currentTime = player.getCurrentTime();
+        const nextDuration = player.getDuration();
+        if (Number.isFinite(currentTime)) setPlaybackTime(currentTime);
+        if (Number.isFinite(nextDuration) && nextDuration > 0) {
+          setDuration(nextDuration);
+          if (Math.abs(nextDuration - lastDuration) > 0.01) {
+            lastDuration = nextDuration;
+            onDurationChange(nextDuration);
+          }
+        }
+        lastRenderedAt = timestamp;
+      }
+      frame = window.requestAnimationFrame(syncTimeline);
+    };
+    frame = window.requestAnimationFrame(syncTimeline);
+    return () => window.cancelAnimationFrame(frame);
+  }, [isPlayerReady, onDurationChange]);
+
+  useEffect(() => {
     if (!videoId || !mountRef.current) return;
     let disposed = false;
     let player: PlayerInstance | null = null;
     setPlayerError(null);
     setIsPlayerReady(false);
+    setPlaybackTime(0);
+    setDuration(0);
     mountRef.current.replaceChildren();
 
     void loadYouTubeApi()
@@ -197,6 +237,19 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, on
       )}
       {videoId && isPlayerReady && (
         <>
+          <div className="absolute inset-x-3 bottom-3 z-30 flex items-center gap-2 rounded-sm bg-black/45 px-2 py-1.5 backdrop-blur-sm sm:inset-x-4 sm:bottom-4" dir="ltr">
+            <input
+              type="range"
+              min="0"
+              max={Math.max(0, duration)}
+              step="0.1"
+              value={Math.min(playbackTime, Math.max(0, duration))}
+              disabled={duration <= 0}
+              aria-label={t.videoTimeline}
+              className="h-5 min-w-0 flex-1 cursor-pointer accent-red-600 disabled:cursor-not-allowed"
+              onChange={event => seekTo(Number(event.currentTarget.value))}
+            />
+          </div>
           <div className="absolute end-3 top-3 z-30">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -253,6 +306,11 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, on
             {activeCue.translated}
           </p>
         </div>
+      )}
+      {videoId && isPreparingNext && !activeCue?.translated && (
+        <p className="pointer-events-none absolute inset-x-0 bottom-[18%] z-25 px-4 text-center text-[10px] font-bold uppercase tracking-[0.16em] text-white/60" role="status">
+          {t.preparingNextSegment}
+        </p>
       )}
     </section>
   );
