@@ -3,7 +3,7 @@ import { useVideoSync } from "@/hooks/useVideoSync";
 import { clampPlaybackTime, getDoubleTapSeekOffset, getSeekTarget } from "@/lib/playerControls";
 import {
   DropdownMenu,
-  // DropdownMenuContent,
+  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
