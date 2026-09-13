@@ -21,8 +21,8 @@ export type SubtitleCue = {
   translated: string;
 };
 
-/** The fixed unit used by the progressive, free-tier translation pipeline. */
-export const PROGRESSIVE_SEGMENT_SECONDS = 30;
+/** Maximum timeline window accepted for a single full-video translation request. */
+export const MAX_VIDEO_DURATION_SECONDS = 28_800;
 
 export type TranslationSegment = {
   videoId: string;
