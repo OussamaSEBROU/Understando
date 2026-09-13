@@ -1,5 +1,4 @@
 import { COOKIE_NAME } from "@shared/const";
-import { PROGRESSIVE_SEGMENT_SECONDS } from "../shared/translation";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -66,10 +65,6 @@ export const appRouter = router({
           })
           .refine(input => input.endSec > input.startSec, {
             message: "The subtitle segment must have a positive duration.",
-            path: ["endSec"],
-          })
-          .refine(input => input.endSec - input.startSec <= PROGRESSIVE_SEGMENT_SECONDS, {
-            message: "The subtitle segment may not exceed 30 seconds.",
             path: ["endSec"],
           })
       )
