@@ -106,9 +106,9 @@ describe("video translation contracts", () => {
     expect(parseDirectVideoCues('{"cues":[]}', { startMs: 30_000, endMs: 60_000 })).toEqual([]);
   });
 
-  it("normalizes progressive segments and rejects windows above 30 seconds", () => {
+  it("normalizes full-video windows up to the maximum duration", () => {
     expect(normalizeSegmentBounds(30.7, 60)).toEqual({ startSec: 30, endSec: 60 });
-    expect(() => normalizeSegmentBounds(0, 31)).toThrow("may not exceed 30 seconds");
+    expect(normalizeSegmentBounds(0, 28_800)).toEqual({ startSec: 0, endSec: 28_800 });
   });
 });
 
