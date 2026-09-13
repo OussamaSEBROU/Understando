@@ -1,5 +1,5 @@
 import {
-  PROGRESSIVE_SEGMENT_SECONDS,
+  MAX_VIDEO_DURATION_SECONDS,
   TRANSLATION_LANGUAGES,
   type SubtitleCue,
   type TargetLanguageCode,
@@ -71,8 +71,8 @@ export const normalizeSegmentBounds = (startSec: number, endSec: number) => {
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
     throw new VideoTranslationError("The requested subtitle segment has invalid timing.");
   }
-  if (end - start > PROGRESSIVE_SEGMENT_SECONDS) {
-    throw new VideoTranslationError("Subtitle segments may not exceed 30 seconds on the free path.");
+  if (end - start > MAX_VIDEO_DURATION_SECONDS) {
+    throw new VideoTranslationError("The requested video timeline is too long to process in one request.");
   }
   return { startSec: start, endSec: end };
 };
@@ -496,7 +496,7 @@ export const translateVideoSegment = async ({
   }
 };
 
-/** Kept for backward-compatible clients; it now returns the priority opening segment. */
+/** Translates the full video in one model request. */
 export const translateVideo = async ({
   youtubeUrl,
   targetLanguage,
@@ -508,7 +508,7 @@ export const translateVideo = async ({
     youtubeUrl,
     targetLanguage,
     startSec: 0,
-    endSec: PROGRESSIVE_SEGMENT_SECONDS,
+    endSec: MAX_VIDEO_DURATION_SECONDS,
   });
 
 export const supportedTargetLanguageCodes = TRANSLATION_LANGUAGES.map(item => item.code);
