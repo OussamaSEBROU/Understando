@@ -3,7 +3,7 @@ import { useVideoSync } from "@/hooks/useVideoSync";
 import { clampPlaybackTime, getDoubleTapSeekOffset, getSeekTarget } from "@/lib/playerControls";
 import {
   DropdownMenu,
-  DropdownMenuContent,
+  // DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -19,6 +19,7 @@ type PlayerInstance = {
   getCurrentTime: () => number;
   getDuration: () => number;
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
+  unloadModule?: (moduleName: string) => void;
   destroy: () => void;
 };
 
@@ -193,6 +194,7 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
             onReady: (event: PlayerReadyEvent) => {
               if (disposed) return;
               playerRef.current = event.target;
+              event.target.unloadModule?.("captions");
               setIsPlayerReady(true);
             },
           },
