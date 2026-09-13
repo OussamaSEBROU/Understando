@@ -1,16 +1,15 @@
 import { YouTubeStage } from "@/components/YouTubeStage";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { mergeProgressiveCues } from "@/lib/progressiveCues";
 import { getYouTubeVideoId } from "@/lib/youtubeUrl";
 import { trpc } from "@/lib/trpc";
 import {
-  PROGRESSIVE_SEGMENT_SECONDS,
+  MAX_VIDEO_DURATION_SECONDS,
   TRANSLATION_LANGUAGES,
   type SubtitleCue,
   type TargetLanguageCode,
 } from "../../../shared/translation";
 import { ArrowRight, Languages, Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 export default function Home() {
   const { direction, interfaceLanguage, t, toggleLanguage } = useLanguage();
@@ -19,19 +18,12 @@ export default function Home() {
   const [videoId, setVideoId] = useState<string | null>(null);
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [isFocusMode, setIsFocusMode] = useState(false);
-  const [videoDuration, setVideoDuration] = useState<number | null>(null);
-  const [nextSegmentStart, setNextSegmentStart] = useState<number | null>(null);
-  const [activeTranslation, setActiveTranslation] = useState<{
-    requestId: number;
-    youtubeUrl: string;
-    targetLanguage: TargetLanguageCode;
-  } | null>(null);
+  const [, setVideoDuration] = useState<number | null>(null);
   const requestIdRef = useRef(0);
   const openingSegment = trpc.video.translateSegment.useMutation();
-  const backgroundSegment = trpc.video.translateSegment.useMutation();
 
   const selectedLanguage = TRANSLATION_LANGUAGES.find(item => item.code === language) ?? TRANSLATION_LANGUAGES[0];
-  const latestError = openingSegment.error ?? backgroundSegment.error;
+  const latestError = openingSegment.error;
   const rawError = latestError?.message.toLowerCase() ?? "";
   const friendlyError = !latestError
     ? null
@@ -57,65 +49,25 @@ export default function Home() {
     requestIdRef.current = requestId;
     setCues([]);
     setVideoId(null);
-    setVideoDuration(null);
-    setNextSegmentStart(null);
-    setActiveTranslation({ requestId, youtubeUrl: url, targetLanguage: language });
     openingSegment.reset();
-    backgroundSegment.reset();
     openingSegment.mutate(
       {
         youtubeUrl: url,
         targetLanguage: language,
         startSec: 0,
-        endSec: PROGRESSIVE_SEGMENT_SECONDS,
+        endSec: MAX_VIDEO_DURATION_SECONDS,
       },
       {
         onSuccess: result => {
           if (requestIdRef.current !== requestId) return;
           setVideoId(result.videoId);
           setCues(result.cues);
-          setNextSegmentStart(result.endSec);
         },
       }
     );
   };
-
-  useEffect(() => {
-    if (!activeTranslation || nextSegmentStart === null || backgroundSegment.isPending) return;
-
-    const durationCeiling = videoDuration && videoDuration > 0 ? Math.ceil(videoDuration) : null;
-    if (durationCeiling !== null && nextSegmentStart >= durationCeiling) {
-      setNextSegmentStart(null);
-      return;
-    }
-
-    const endSec = durationCeiling === null
-      ? nextSegmentStart + PROGRESSIVE_SEGMENT_SECONDS
-      : Math.min(nextSegmentStart + PROGRESSIVE_SEGMENT_SECONDS, durationCeiling);
-    const requestId = activeTranslation.requestId;
-
-    backgroundSegment.mutate(
-      {
-        youtubeUrl: activeTranslation.youtubeUrl,
-        targetLanguage: activeTranslation.targetLanguage,
-        startSec: nextSegmentStart,
-        endSec,
-      },
-      {
-        onSuccess: result => {
-          if (requestIdRef.current !== requestId) return;
-          setCues(previous => mergeProgressiveCues(previous, result.cues));
-          setNextSegmentStart(result.endSec);
-        },
-        onError: () => {
-          if (requestIdRef.current === requestId) setNextSegmentStart(null);
-        },
-      }
-    );
-  }, [activeTranslation, backgroundSegment, nextSegmentStart, videoDuration]);
-
-  const isPreparing = openingSegment.isPending || backgroundSegment.isPending;
-  const isPreparingNext = videoId !== null && (backgroundSegment.isPending || nextSegmentStart !== null);
+  const isPreparing = openingSegment.isPending;
+  const isPreparingNext = false;
 
   return (
     <div className="app-shell min-h-screen w-full max-w-full overflow-x-clip bg-black text-white selection:bg-red-600 selection:text-white">
