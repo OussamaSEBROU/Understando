@@ -28,6 +28,11 @@ type PlayerReadyEvent = {
   target: PlayerInstance;
 };
 
+const disableYouTubeCaptions = (player: PlayerInstance) => {
+  player.setOption?.("captions", "track", {});
+  player.unloadModule?.("captions");
+};
+
 type YouTubeApi = {
   Player: new (target: HTMLElement, options: Record<string, unknown>) => PlayerInstance;
 };
@@ -195,9 +200,14 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
             onReady: (event: PlayerReadyEvent) => {
               if (disposed) return;
               playerRef.current = event.target;
-              event.target.setOption?.("captions", "track", {});
-              event.target.unloadModule?.("captions");
+              disableYouTubeCaptions(event.target);
+              window.setTimeout(() => {
+                if (!disposed) disableYouTubeCaptions(event.target);
+              }, 500);
               setIsPlayerReady(true);
+            },
+            onStateChange: () => {
+              if (!disposed && player) disableYouTubeCaptions(player);
             },
           },
         });
