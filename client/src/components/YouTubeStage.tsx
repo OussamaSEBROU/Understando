@@ -1,5 +1,6 @@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useVideoSync } from "@/hooks/useVideoSync";
+import { useZenMode } from "@/hooks/useZenMode";
 import { clampPlaybackTime, getDoubleTapSeekOffset, getSeekTarget } from "@/lib/playerControls";
 import {
   DropdownMenu,
@@ -102,8 +103,10 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [subtitleSize, setSubtitleSize] = useState<SubtitleSize>("medium");
   const [isStageFullscreen, setIsStageFullscreen] = useState(false);
+  const [isZenMode, setIsZenMode] = useState(true);
   const [playbackTime, setPlaybackTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const zen = useZenMode(isZenMode);
   const activeCue = useVideoSync(playerRef, cues);
 
   const seekTo = (seconds: number) => {
@@ -129,6 +132,7 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
       return;
     }
     lastTouchRef.current = { side, timestamp: now };
+    zen.onTapReveal();
   };
 
   const toggleFullscreen = async () => {
@@ -223,8 +227,20 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
     };
   }, [t.playerLoadError, videoId]);
 
+  const controlsVisibilityClass = zen.controlsVisible
+    ? "opacity-100 pointer-events-auto"
+    : "opacity-0 pointer-events-none";
+
   return (
-    <section ref={stageRef} className="youtube-stage surface-shine relative aspect-video w-full overflow-hidden border border-white/30 bg-black touch-manipulation" aria-label={t.playerLabel} aria-busy={videoId ? !isPlayerReady : undefined}>
+    <section
+      ref={stageRef}
+      className="youtube-stage surface-shine relative aspect-video w-full overflow-hidden border border-white/30 bg-black touch-manipulation"
+      aria-label={t.playerLabel}
+      aria-busy={videoId ? !isPlayerReady : undefined}
+      onPointerMove={zen.onPointerMove}
+      onPointerLeave={zen.onPointerLeave}
+      onClick={zen.onTapReveal}
+    >
       {videoId ? (
         <div ref={mountRef} className="h-full w-full [&_iframe]:h-full [&_iframe]:w-full" />
       ) : (
@@ -251,7 +267,14 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
       )}
       {videoId && isPlayerReady && (
         <>
-          <div className="absolute inset-x-3 bottom-3 z-30 flex items-center gap-2 rounded-sm bg-black/45 px-2 py-1.5 backdrop-blur-sm sm:inset-x-4 sm:bottom-4" dir="ltr">
+          <div
+            className={`absolute inset-x-3 bottom-3 z-30 flex items-center gap-2 rounded-sm bg-black/60 px-2 py-1.5 backdrop-blur-sm transition-opacity duration-300 sm:inset-x-4 sm:bottom-4 ${controlsVisibilityClass}`}
+            dir="ltr"
+            onPointerDown={zen.onInteractionStart}
+            onPointerUp={zen.onInteractionEnd}
+            onFocusCapture={zen.onFocusCapture}
+            onBlurCapture={zen.onBlurCapture}
+          >
             <input
               type="range"
               min="0"
@@ -262,10 +285,16 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
               aria-label={t.videoTimeline}
               className="h-5 min-w-0 flex-1 cursor-pointer accent-red-600 disabled:cursor-not-allowed"
               onChange={event => seekTo(Number(event.currentTarget.value))}
+              onFocus={zen.onFocusCapture}
+              onBlur={zen.onBlurCapture}
             />
           </div>
-          <div className="absolute end-3 top-3 z-30">
-            <DropdownMenu>
+          <div
+            className={`absolute end-3 top-3 z-30 transition-opacity duration-300 ${controlsVisibilityClass}`}
+            onFocusCapture={zen.onFocusCapture}
+            onBlurCapture={zen.onBlurCapture}
+          >
+            <DropdownMenu onOpenChange={open => { if (open) zen.onInteractionStart(); else zen.onInteractionEnd(); }}>
               <DropdownMenuTrigger asChild>
                 <button type="button" className="flex size-11 items-center justify-center border border-white/30 bg-black/65 text-white backdrop-blur-sm transition-colors hover:border-red-500 hover:text-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 sm:size-10" aria-label={t.subtitleSettings} title={t.subtitleSettings}>
                   <Settings2 className="size-4" aria-hidden="true" />
@@ -279,6 +308,9 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => seekBy(10)} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
                   <span className="flex size-4 items-center justify-center text-xs font-black">+10</span> {t.seekForward}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setIsZenMode(z => !z)} className="cursor-pointer text-white focus:bg-red-600 focus:text-white">
+                  <span className="flex size-4 items-center justify-center font-mono text-xs font-black">Z</span> {isZenMode ? t.exitZenMode : t.zenMode}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator className="bg-white/20" />
                 <DropdownMenuLabel className="px-2 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-white/50">{t.subtitleSizeLabel}</DropdownMenuLabel>
@@ -310,12 +342,20 @@ export function YouTubeStage({ videoId, cues, subtitleDirection, isFocusMode, is
         </>
       )}
       {isStageFullscreen && (
-        <button type="button" className="absolute end-3 top-3 z-40 flex size-11 items-center justify-center border border-white/30 bg-black/70 text-white backdrop-blur-sm hover:border-red-500 sm:end-4 sm:top-4 sm:size-10" onClick={() => void toggleFullscreen()} aria-label={t.exitFullscreen} title={t.exitFullscreen}>
+        <button
+          type="button"
+          className={`absolute end-3 top-3 z-40 flex size-11 items-center justify-center border border-white/30 bg-black/70 text-white backdrop-blur-sm hover:border-red-500 transition-opacity duration-300 sm:end-4 sm:top-4 sm:size-10 ${controlsVisibilityClass}`}
+          onClick={() => void toggleFullscreen()}
+          aria-label={t.exitFullscreen}
+          title={t.exitFullscreen}
+          onFocusCapture={zen.onFocusCapture}
+          onBlurCapture={zen.onBlurCapture}
+        >
           <Minimize2 className="size-4" aria-hidden="true" />
         </button>
       )}
       {activeCue?.translated && (
-        <div className="subtitle-layer pointer-events-none absolute inset-x-0 bottom-[13%] z-25 px-3 text-center sm:bottom-[11%] sm:px-14" dir={subtitleDirection}>
+        <div className="subtitle-layer pointer-events-none absolute inset-x-0 bottom-[14%] z-25 px-3 text-center sm:bottom-[12%] sm:px-14" dir={subtitleDirection}>
           <p className={`inline bg-black/30 px-2.5 py-1.5 font-bold leading-snug tracking-normal text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.95)] backdrop-blur-[1px] ${subtitleSizeClasses[subtitleSize]}`}>
             {activeCue.translated}
           </p>
