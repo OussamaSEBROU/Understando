@@ -41,6 +41,8 @@ export const interfaceCopy = {
     exitFullscreen: "الخروج من ملء الشاشة",
     focusMode: "وضع التركيز",
     exitFocusMode: "إنهاء وضع التركيز",
+    zenMode: "وضع زن (إخفاء تلقائي للتحكم)",
+    exitZenMode: "إيقاف وضع زن",
     captionsReady: "الترجمة جاهزة",
     emptyPlayerTitle: "أدخل رابط الفيديو لبدء قراءة الترجمة.",
     emptyPlayerBody: "سيظهر النص المترجم هنا متزامنًا مع وقت التشغيل.",
@@ -50,6 +52,8 @@ export const interfaceCopy = {
     queueBusy: "يتم تنظيم الطلب ضمن السعة المتاحة. أعد المحاولة بعد لحظات إذا لم يبدأ.",
     dailyCapacity: "وصلت السعة المجانية المتاحة اليوم إلى حدها. يُرجى المحاولة بعد إعادة التعيين اليومية.",
     translationFailed: "تعذر إتمام الترجمة الآن. يُرجى المحاولة لاحقًا.",
+    partialTranslationNotice: "تمت ترجمة جزء من الفيديو ضمن السعة المتاحة.",
+    processingFullVideo: "جاري معالجة وترجمة كامل الفيديو الصوتي بدقة عالية... يُرجى الانتظار لحين اكتمال الترجمة.",
   },
   en: {
     liveSubtitleTranslation: "Live subtitle translation",
@@ -91,6 +95,8 @@ export const interfaceCopy = {
     exitFullscreen: "Exit full screen",
     focusMode: "Focus mode",
     exitFocusMode: "Exit focus mode",
+    zenMode: "Zen Mode (Auto-hide controls)",
+    exitZenMode: "Exit Zen Mode",
     captionsReady: "Captions ready",
     emptyPlayerTitle: "Enter a video link to start reading translations.",
     emptyPlayerBody: "The translated text will appear here in sync with playback.",
@@ -100,6 +106,8 @@ export const interfaceCopy = {
     queueBusy: "Your request is being organised within the available capacity. Try again shortly if it does not start.",
     dailyCapacity: "Today's available free capacity has been reached. Please try again after the daily reset.",
     translationFailed: "Translation could not be completed right now. Please try again later.",
+    partialTranslationNotice: "Part of the video was translated within available capacity.",
+    processingFullVideo: "Processing and translating full video audio with high accuracy... Please wait for completion.",
   },
 } as const;
 
