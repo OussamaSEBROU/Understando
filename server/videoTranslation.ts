@@ -49,21 +49,19 @@ const positiveInteger = (name: string, fallback: number) => {
 };
 
 /**
- * Video is substantially more token-intensive than plain subtitle text. These
- * conservative defaults serialize direct-video analysis and reserve capacity
- * before a provider call. Operators can lower them further in Render without
- * publishing a new build.
+ * High-capacity governor accommodating full-video multimodal translation.
+ * Ensures fast processing while respecting provider limits.
  */
 const videoQuotaGovernor = new FreeQuotaGovernor({
-  rpm: positiveInteger("FREE_VIDEO_RPM", 1),
-  tpm: positiveInteger("FREE_VIDEO_TPM", 120_000),
-  rpd: positiveInteger("FREE_VIDEO_RPD", 12),
-  tpd: positiveInteger("FREE_VIDEO_TPD", 720_000),
+  rpm: positiveInteger("FREE_VIDEO_RPM", 10),
+  tpm: positiveInteger("FREE_VIDEO_TPM", 2_000_000),
+  rpd: positiveInteger("FREE_VIDEO_RPD", 100),
+  tpd: positiveInteger("FREE_VIDEO_TPD", 10_000_000),
 });
 
-const MAX_VIDEO_INPUT_TOKENS = positiveInteger("FREE_VIDEO_MAX_INPUT_TOKENS", 100_000);
-const MAX_VIDEO_OUTPUT_TOKENS = positiveInteger("FREE_VIDEO_MAX_OUTPUT_TOKENS", 6_144);
-const FALLBACK_VIDEO_RESERVATION_TOKENS = positiveInteger("FREE_VIDEO_FALLBACK_TOKENS", 60_000);
+const MAX_VIDEO_INPUT_TOKENS = positiveInteger("FREE_VIDEO_MAX_INPUT_TOKENS", 1_048_576);
+const MAX_VIDEO_OUTPUT_TOKENS = positiveInteger("FREE_VIDEO_MAX_OUTPUT_TOKENS", 65_536);
+const FALLBACK_VIDEO_RESERVATION_TOKENS = positiveInteger("FREE_VIDEO_FALLBACK_TOKENS", 100_000);
 
 export const normalizeSegmentBounds = (startSec: number, endSec: number) => {
   const start = Math.max(0, Math.floor(startSec));
@@ -254,13 +252,19 @@ const directVideoPrompt = (
   endSec: number
 ) =>
   [
-    "Create timed, subtitle-quality translations for this public video.",
+    "You are an elite, highly skilled professional video subtitle translator and audio transcriber.",
     `Target language: ${language.label}.`,
-    `Translate only the timeline window from ${formatPromptTime(startSec)} to ${formatPromptTime(endSec)} (inclusive of speech that begins inside this window).`,
-    "Return only the translated spoken content as caption cues in the required JSON schema.",
-    "Translate idiomatically from the complete audio-visual context. Preserve names, pronunciations, technical terms, and established spellings when appropriate.",
-    "Never summarize, explain, comment, invent content, or add a transcript separate from the translated captions.",
-    "Use integer startMs and endMs values in milliseconds from the original full-video timeline, never from a relative segment clock. Do not return cues outside the requested window. Keep each cue concise, naturally readable, and aligned to the spoken phrase. Return an empty cues array if the window is silent.",
+    `Timeline window: from ${formatPromptTime(startSec)} to ${formatPromptTime(endSec)} (${startSec * 1000}ms to ${endSec * 1000}ms).`,
+    "TASK: Translate the spoken dialogue across the video timeline with extreme acoustic accuracy, faithful translation, and precise synchronization.",
+    "CRITICAL ACCURACY GUIDELINES:",
+    "1. Listen meticulously to the actual spoken audio across the entire requested timeline. Transcribe and translate spoken dialogue with maximum acoustic fidelity.",
+    "2. Synchronize each subtitle cue precisely to the actual speech onset (startMs) and speech offset (endMs) in integer milliseconds on the original full-video timeline.",
+    "3. Translate faithfully, completely, and idiomatically into natural, high-quality " + language.label + ". Do not summarize, condense, or omit spoken sentences.",
+    "4. Use the audiovisual context to accurately resolve speaker intent, tone, technical terminology, proper nouns, names, and cultural references.",
+    "5. Preserve proper names, brand names, technical terms, numbers, units, code, and established quotations with high precision.",
+    "6. Keep subtitle lines concise, readable, and naturally formatted (1-2 lines per cue) matching natural speech cadence and breath pauses.",
+    "7. For periods of silence, background music, or sound effects without dialogue, do not invent dialogue. Return an empty cues array if the window has no spoken content.",
+    "8. Return ONLY valid JSON matching the schema, with no markdown fences, no explanatory text, and no extra keys.",
   ].join("\n");
 
 const modelName = () => process.env.VIDEO_TRANSLATION_MODEL?.trim() || DEFAULT_MODEL;
@@ -307,7 +311,7 @@ export const parseDirectVideoCues = (
     throw new VideoTranslationError("The video translation response did not include timed captions.");
   }
 
-  const cues = (parsed as { cues: unknown[] }).cues.flatMap((item, index) => {
+  const rawCues = (parsed as { cues: unknown[] }).cues.flatMap((item, index) => {
     if (!item || typeof item !== "object") return [];
     const { startMs, endMs, text } = item as { startMs?: unknown; endMs?: unknown; text?: unknown };
     if (
@@ -321,23 +325,23 @@ export const parseDirectVideoCues = (
     }
 
     const translated = cleanText(text);
+    if (!translated) return [];
+
     const normalizedStart = Math.max(0, Math.round(startMs));
     const normalizedEnd = Math.max(normalizedStart + 250, Math.round(endMs));
-    return translated
-      ? [
-          {
-            id: index,
-            startMs: normalizedStart,
-            endMs: normalizedEnd,
-            source: "",
-            translated,
-          },
-        ]
-      : [];
+    return [
+      {
+        id: index,
+        startMs: normalizedStart,
+        endMs: normalizedEnd,
+        source: "",
+        translated,
+      },
+    ];
   });
 
   const inSegment = segment
-    ? cues
+    ? rawCues
         .filter(cue => cue.endMs > segment.startMs && cue.startMs < segment.endMs)
         .map(cue => ({
           ...cue,
@@ -345,15 +349,34 @@ export const parseDirectVideoCues = (
           endMs: Math.min(segment.endMs, cue.endMs),
         }))
         .filter(cue => cue.endMs > cue.startMs)
-    : cues;
+    : rawCues;
 
   if (inSegment.length === 0 && !segment) {
     throw new VideoTranslationError("The video did not produce usable timed translations.");
   }
 
-  return inSegment
-    .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
-    .map((cue, id) => ({ ...cue, id }));
+  const sorted = inSegment.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  const deduplicated: SubtitleCue[] = [];
+
+  for (const cue of sorted) {
+    const last = deduplicated[deduplicated.length - 1];
+    if (last) {
+      if (last.startMs === cue.startMs && last.endMs === cue.endMs && last.translated === cue.translated) {
+        continue;
+      }
+      const overlapStart = Math.max(last.startMs, cue.startMs);
+      const overlapEnd = Math.min(last.endMs, cue.endMs);
+      const overlapMs = Math.max(0, overlapEnd - overlapStart);
+      if (overlapMs > 0 && last.translated === cue.translated) {
+        last.startMs = Math.min(last.startMs, cue.startMs);
+        last.endMs = Math.max(last.endMs, cue.endMs);
+        continue;
+      }
+    }
+    deduplicated.push(cue);
+  }
+
+  return deduplicated.map((cue, id) => ({ ...cue, id }));
 };
 
 const providerError = (status: number) => {
@@ -500,15 +523,20 @@ export const translateVideoSegment = async ({
 export const translateVideo = async ({
   youtubeUrl,
   targetLanguage,
+  durationSec,
 }: {
   youtubeUrl: string;
   targetLanguage: TargetLanguageCode;
+  durationSec?: number;
 }): Promise<TranslationResult> =>
   translateVideoSegment({
     youtubeUrl,
     targetLanguage,
     startSec: 0,
-    endSec: MAX_VIDEO_DURATION_SECONDS,
+    endSec:
+      typeof durationSec === "number" && Number.isFinite(durationSec) && durationSec > 0
+        ? Math.ceil(durationSec)
+        : MAX_VIDEO_DURATION_SECONDS,
   });
 
 export const supportedTargetLanguageCodes = TRANSLATION_LANGUAGES.map(item => item.code);
