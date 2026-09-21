@@ -1,33 +1,29 @@
 import { YouTubeStage } from "@/components/YouTubeStage";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { getYouTubeVideoId } from "@/lib/youtubeUrl";
-import { trpc } from "@/lib/trpc";
+import { useProgressiveTranslation } from "@/hooks/useProgressiveTranslation";
 import {
-  MAX_VIDEO_DURATION_SECONDS,
   TRANSLATION_LANGUAGES,
-  type SubtitleCue,
   type TargetLanguageCode,
 } from "../../../shared/translation";
 import { ArrowRight, Languages, Loader2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 export default function Home() {
   const { direction, interfaceLanguage, t, toggleLanguage } = useLanguage();
   const [url, setUrl] = useState("");
   const [language, setLanguage] = useState<TargetLanguageCode>("ar");
-  const [videoId, setVideoId] = useState<string | null>(null);
-  const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [, setVideoDuration] = useState<number | null>(null);
-  const requestIdRef = useRef(0);
-  const openingSegment = trpc.video.translateSegment.useMutation();
+
+  const progressive = useProgressiveTranslation();
+  const { cues, videoId, isPreparing, isPreparingNext, error: progressiveError } = progressive;
 
   const selectedLanguage = TRANSLATION_LANGUAGES.find(item => item.code === language) ?? TRANSLATION_LANGUAGES[0];
-  const latestError = openingSegment.error;
-  const rawError = latestError?.message.toLowerCase() ?? "";
-  const friendlyError = !latestError
+  const rawError = progressiveError?.message.toLowerCase() ?? "";
+  const friendlyError = !progressiveError
     ? null
-    : latestError.data?.code === "TOO_MANY_REQUESTS"
+    : progressiveError.code === "TOO_MANY_REQUESTS"
       ? rawError.includes("today") || rawError.includes("budget")
         ? t.dailyCapacity
         : t.queueBusy
@@ -35,39 +31,28 @@ export default function Home() {
         ? t.invalidLink
         : rawError.includes("captions")
           ? t.noCaptions
-          : t.translationFailed;
+          : cues.length > 0
+            ? t.partialTranslationNotice
+            : t.translationFailed;
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const validVideoId = getYouTubeVideoId(url);
     if (!validVideoId) {
-      setVideoId(null);
       return;
     }
 
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    setCues([]);
-    setVideoId(null);
-    openingSegment.reset();
-    openingSegment.mutate(
-      {
-        youtubeUrl: url,
-        targetLanguage: language,
-        startSec: 0,
-        endSec: MAX_VIDEO_DURATION_SECONDS,
-      },
-      {
-        onSuccess: result => {
-          if (requestIdRef.current !== requestId) return;
-          setVideoId(result.videoId);
-          setCues(result.cues);
-        },
-      }
-    );
+    progressive.start(url, language, () => {
+      // After a translation request succeeds and the translated video/player is visibly loaded,
+      // automatically clear the YouTube URL input field so it is empty and ready for a new link.
+      setUrl("");
+    });
   };
-  const isPreparing = openingSegment.isPending;
-  const isPreparingNext = false;
+
+  const handleDurationChange = (nextDuration: number) => {
+    setVideoDuration(nextDuration);
+    progressive.updateDuration(nextDuration);
+  };
 
   return (
     <div className="app-shell min-h-screen w-full max-w-full overflow-x-clip bg-black text-white selection:bg-red-600 selection:text-white">
@@ -105,7 +90,7 @@ export default function Home() {
                 {isPreparing ? t.prepare : t.translate}
               </button>
             </form>
-            {openingSegment.isPending && <p role="status" className="mt-3 text-xs font-semibold text-white/65">{t.preparingOpeningSegment}</p>}
+            {isPreparing && <p role="status" className="mt-3 text-xs font-semibold text-white/65">{t.preparingOpeningSegment}</p>}
             {videoId && isPreparingNext && <p role="status" className="mt-3 text-xs font-semibold text-white/65">{t.preparingNextSegment}</p>}
             {friendlyError && <p role="alert" className="mt-3 border-s-2 border-red-600 ps-3 text-sm font-medium text-red-300">{friendlyError}</p>}
           </section>
@@ -121,7 +106,7 @@ export default function Home() {
               subtitleDirection={selectedLanguage.dir}
               isFocusMode={isFocusMode}
               isPreparingNext={isPreparingNext}
-              onDurationChange={setVideoDuration}
+              onDurationChange={handleDurationChange}
               onToggleFocusMode={() => setIsFocusMode(value => !value)}
             />
           </section>
