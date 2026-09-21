@@ -23,7 +23,6 @@ const rethrowVideoTranslationError = (error: unknown): never => {
 };
 
 export const appRouter = router({
-    // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
@@ -42,6 +41,7 @@ export const appRouter = router({
         z.object({
           youtubeUrl: z.string().trim().min(1).max(1_024),
           targetLanguage: z.enum(supportedTargetLanguageCodes as [string, ...string[]]),
+          durationSec: z.number().positive().max(28_800).optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -49,6 +49,7 @@ export const appRouter = router({
           return await translateVideo({
             youtubeUrl: input.youtubeUrl,
             targetLanguage: input.targetLanguage as Parameters<typeof translateVideo>[0]["targetLanguage"],
+            durationSec: input.durationSec,
           });
         } catch (error) {
           return rethrowVideoTranslationError(error);
@@ -81,13 +82,6 @@ export const appRouter = router({
         }
       }),
   }),
-
-  // TODO: add feature routers here, e.g.
-  // todo: router({
-  //   list: protectedProcedure.query(({ ctx }) =>
-  //     db.getUserTodos(ctx.user.id)
-  //   ),
-  // }),
 });
 
 export type AppRouter = typeof appRouter;
