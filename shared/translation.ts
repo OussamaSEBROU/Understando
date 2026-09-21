@@ -24,6 +24,15 @@ export type SubtitleCue = {
 /** Maximum timeline window accepted for a single full-video translation request. */
 export const MAX_VIDEO_DURATION_SECONDS = 28_800;
 
+/** Default chunk window in seconds for progressive translation. */
+export const CHUNK_DURATION_SECONDS = 120;
+
+/** Overlap in seconds between adjacent translation windows for speech continuity. */
+export const CHUNK_OVERLAP_SECONDS = 5;
+
+/** Maximum number of progressive chunks to prefetch ahead of playback. */
+export const CHUNK_PREFETCH_AHEAD = 2;
+
 export type TranslationSegment = {
   videoId: string;
   targetLanguage: TargetLanguageCode;
